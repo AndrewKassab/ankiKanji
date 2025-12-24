@@ -74,16 +74,19 @@ kanjiBreakdown();
  * @main 
  */
 async function kanjiBreakdown(){
+	var allRadicals = await localJSON("wkRadicals");
 	var jsKanji = await localJSON("kanji");
 	kanji = kanji.replace(/([ぁ-ゟ]+|[゠-ヿ]+|[!-~]+|[々〆〤「」]+|[！-￮]+|[\s*])/g, '');
 	kanjiArr = kanji.split("");
 	k = kanjiArr.join(",");
 	//console.log(k);}
-	kanjiJS = wkBlank;
+	kanjiJS = await getSubject("subjects?types=kanji&slugs=" + k);
+	if(kanjiJS==undefined)kanjiJS = new Array(0);
+	if(kanjiJS.length==0) kanjiJS = wkBlank;
 	sorted = sortKanji();
 	//console.log(sorted);
 	for(let i = 0; i < sorted.length; i++){
-		await createKanji(sorted[i],jsKanji);
+		await createKanji(sorted[i],jsKanji,allRadicals);
 	}
 }
 
@@ -134,13 +137,19 @@ async function createKanji(data,jsKanji,allRadicals){
 	grid.classList.add('grid-container');
 	//divs for items
 	const item1 = document.createElement('div');
+	const kanjiGrid = document.createElement('div');
 	const item2 = document.createElement('div');
+	const item3 = document.createElement('div');
 	const item4 = document.createElement('div');
+	const item5 = document.createElement('div');
 	
 	//class for items
 	item1.classList.add('item1');
+	kanjiGrid.classList.add('entry');
 	item2.classList.add('item2');
+	item3.classList.add('item3');
 	item4.classList.add('item4');
+	item5.classList.add('item5');
 	
 	//readings p 
 	const on = document.createElement('p');
@@ -152,12 +161,18 @@ async function createKanji(data,jsKanji,allRadicals){
 	on.innerHTML = "<p><strong>On’yomi:</strong></p>";
 	kun.innerHTML = "<p><strong>Kun’yomi:</strong></p>";
 	
+	data.level = "<wk><span title='wk level'>WK" + data.level + "</span></wk>";
 	//This is for NON-WK Kanji
 	if(data.characters === 'NOPE'){
-		code = "404";
+		data.document_url=getURL(data.slug);
+		code = await getCode(data.document_url);
 		kanjiAPI = jsKanji[data.slug];
 		//console.log(kanjiAPI);
 		if(code==="404") data.document_url="https://jisho.org/search/" + data.slug + "%20%23kanji";
+		//KanjIDamage
+		data.meaning_mnemonic = getMnemonic(code); 
+		item3.innerHTML = getRadicals(code,data.slug);
+		data.component_subject_ids = new Array(0);
 		if(kanjiAPI==null) kanjiAPI =kanjiBlank;
 		var readings = {kun:kanjiAPI.kun_readings, on:kanjiAPI.on_readings};
 		data.readings = readings;
@@ -193,7 +208,27 @@ async function createKanji(data,jsKanji,allRadicals){
 	item1.innerHTML = "<a href='" + data.document_url + "'>" + meaning +  "</a> " + data.level;
 	
 	
-	
+	//kanjiGrid
+	const kanjiStrokeOrder = document.createElement('ul');
+	rawKanji = data.slug;
+	kanjiINFO = jsKanji[rawKanji];
+	kanjiStrokeOrder.classList.add('stroke-order');
+			const position = -56.5;
+			var kCode = rawKanji.charCodeAt()
+			var strokeCount = 0;
+			if(kanjiINFO!=null){
+				strokeCount = kanjiINFO.stroke_count;
+			}
+			//if(strokeCount==null) strokeCount = findStroke2(kCode);
+			var code = ""
+			var style = "style='background-image: url(https://damiansh.github.io/kanji-sheets/strokes/" + kCode + ".png);background-position:";
+			var clase = "class='strokeBox' ";
+			
+			for(let i=0;i<strokeCount;i++){
+				code = code + "<li><div " + clase + style + (position*(i+1)) + "em 0em;'</div></li>";
+			}
+	kanjiStrokeOrder.innerHTML = code;
+	kanjiGrid.appendChild(kanjiStrokeOrder);
 	//item 2 - slug
 	item2.innerHTML = "<a href='" + data.document_url + "'><slug>" +  data.slug + "</slug></a>"
 	
@@ -237,10 +272,15 @@ async function createKanji(data,jsKanji,allRadicals){
 		item4.appendChild(kun);
 	}
 
+	//item 5 - mnemonic
+	item5.innerHTML = data.meaning_mnemonic;
 	//append to grid
 	grid.appendChild(item1);
+	grid.appendChild(kanjiGrid);
 	grid.appendChild(item2);
+	grid.appendChild(item3);
 	grid.appendChild(item4);
+	grid.appendChild(item5);
 	
 	
 	//console.log(data);
@@ -248,5 +288,149 @@ async function createKanji(data,jsKanji,allRadicals){
 	kanjiInfo.appendChild(grid);
 	lineaBreak = document.createElement("br");
 	kanjiInfo.appendChild(lineaBreak);
+}
+
+/**
+ * Method to build the html section of the radicals (item3)
+ * @param {object} r - the radical data from WaniKani API
+ * @param {html object} radical - the html element of radicals 
+ * @param {int} check - A number to check if it is the first radical on the list.
+ */
+function createRadical(r,radical,check){
+	//console.log(radical);
+	//console.log(r);
+	rString = "";
+	if(r.characters!=null){
+		rString = "<a href='" + r.document_url + "'>" + "<radical2>" + r.characters + "</radical2></a> " + r.meanings[0].meaning;
+		
+	}
+	else{
+		for(let i = 0; i < r.character_images.length; i++){
+		 if(r.character_images[i].content_type == "image/png"){
+			rString = "<a href='" + r.document_url + "' " + "class='ralink'><img weight='34' height ='34' class='raimg' src='" + r.character_images[i].url + "'></a> " + r.meanings[0].meaning;
+		 }
+		}
+	}
+	if(check==0){
+		radical.innerHTML = rString;
+	}
+	else{
+		radical.innerHTML = radical.innerHTML + " + " + rString;
+	}
+	
+}
+
+/**
+ * Method to call the WaniKani API
+ * @param {string} apiEndpointPath - the endpoint for the API
+ */
+async function getSubject(apiEndpointPath){
+	var requestHeaders =
+	  new Headers({
+		Authorization: 'Bearer ' + apiToken,
+	  });
+ 
+	var apiEndpoint =
+	  new Request('https://api.wanikani.com/v2/' + apiEndpointPath, {
+		method: 'GET',
+		headers: requestHeaders
+	  });
+	const response = await fetch(apiEndpoint)
+	json = await response.json();
+	return json.data;
+}
+
+/**
+ * Method to get the KanjiDamage copy url
+ * @param {char} kanji - the kanji slug 
+ */
+function getURL (kanji) {
+    return "https://damiansh.github.io/waniAnki/kanjidamage/" + kanji;
+}
+
+/**
+ * Method to call the APIs or websites. 
+ * @param {String} url - url to call
+ */
+async function getCode(url){
+	var response="";
+	try{
+		await $.get(url,function(data)//Remember, same domain
+		{
+			response = data;
+		});
+	}
+	catch(err) {
+		return "404";
+	}
+	
+	return response;
+}
+
+/**
+ * Method to get mnemonic part from the KanjiDamage website
+ * @param {String} code - the html code from KanjiDamage
+ */
+function getMnemonic(code){
+	if(code=="404") return "N/A";
+	code = code.replace(/(\r\n|\n|\r)/gm, "");
+    var first = "<table class='definition'><tr><td></td><td><p>"; 
+    var second = "</p></td></tr></table><h2>"; 
+    var criteria = new RegExp("(?:"+first+")((.[\\s\\S]*?))(?:"+second+")", "ig");
+    var mnemonic = criteria.exec(code);
+
+    if (mnemonic && mnemonic.length > 1)
+    {  
+		var dom = new DOMParser ();
+		var mHTML   = dom.parseFromString (mnemonic[1], "text/html");
+		var imgs = mHTML.getElementsByTagName("img");
+		var oIMG;
+		for(let i=0;i<imgs.length;i++){
+			imgs[i].setAttribute("width", "80");
+			imgs[i].setAttribute("height", "80");
+			oIMG = imgs[i].outerHTML;
+			imgs[i].outerHTML = oIMG.replace("../visualaids/", "https://damiansh.github.io/waniAnki/visualaids/");
+			//console.log(links[i]);
+		}
+		return mHTML.body.innerHTML; //return second result.
+    }
+
+}
+
+/**
+ * Method to get radicals part from the KanjiDamage website
+ * @param {String} code - the html code from KanjiDamage
+ */
+function getRadicals(code,kanjiIn){
+	if(code=="404") return "<radical><a href='https://jisho.org/search/" + kanjiIn + "%20%23kanji'>Go to Jisho.org</a></radical>";
+	code = code.replace(/(\r\n|\n|\r)/gm, "");
+    var first = "</h1>"; 
+    var second = "</div>"; 
+    var criteria = new RegExp("(?:"+first+")((.[\\s\\S]*?))(?:"+second+")", "ig");
+    var radicals = criteria.exec(code);
+    if (radicals && radicals.length > 1){  
+		var dom = new DOMParser ();
+		var rHTML   = dom.parseFromString (radicals[1], "text/html");
+		links = rHTML.getElementsByTagName("a");
+		var olink;
+		//console.log(links);
+		for(let i=0;i<links.length;i++){
+			olink = links[i].outerHTML;
+			links[i].outerHTML = olink.replace('href="','href="https://www.kanjidamage.com/kanji/');
+		}
+		var imgs = rHTML.getElementsByTagName("img");
+		var oIMG;		
+		for(let i=0;i<imgs.length;i++){
+			imgs[i].parentNode.classList.remove('component');
+			imgs[i].classList.add('ralink');
+			imgs[i].setAttribute("width", "40");
+			imgs[i].setAttribute("height", "40");
+			oIMG = imgs[i].outerHTML;
+			imgs[i].outerHTML = oIMG.replace("../assets/radsmall/", "https://damiansh.github.io/waniAnki/assets/radsmall/");
+		}
+		
+		return rHTML.body.innerHTML; //return second result.
+    }
+	
 }
 
